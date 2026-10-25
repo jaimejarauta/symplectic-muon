@@ -216,10 +216,56 @@ def main():
         default="results/nanogpt_manifest.json",
         help="Manifest output path",
     )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Enable Weights & Biases telemetry logging",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="moonshot-symplectic-muon",
+        help="W&B project name",
+    )
+    parser.add_argument(
+        "--wandb-name",
+        type=str,
+        default=None,
+        help="W&B run display name",
+    )
+    parser.add_argument(
+        "--wandb-mode",
+        type=str,
+        default=None,
+        choices=["online", "offline", "disabled"],
+        help="W&B run mode override",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
     device, dev_name = resolve_device(args.device)
+
+    # Initialize W&B tracking if requested or WANDB_API_KEY is present
+    use_wandb = args.wandb or (os.environ.get("WANDB_API_KEY") is not None and not args.dry_run)
+    wandb_run = None
+    if use_wandb:
+        try:
+            import wandb
+            mode = args.wandb_mode or os.environ.get("WANDB_MODE", "online" if os.environ.get("WANDB_API_KEY") else "offline")
+            run_name = args.wandb_name or f"{args.optimizer}-steps{args.steps}-seed{args.seed}"
+            wandb_run = wandb.init(
+                project=args.wandb_project,
+                group="nanogpt-stage2",
+                job_type="train",
+                name=run_name,
+                config=vars(args),
+                mode=mode,
+                dir=os.environ.get("WANDB_DIR", "/tmp/wandb"),
+            )
+            print(f"[W&B] Initialized run '{run_name}' in project '{args.wandb_project}' (mode: {mode})")
+        except Exception as e:
+            print(f"[W&B Warning] Failed to initialize wandb: {e}. Continuing without W&B.")
+            use_wandb = False
 
     # Precision setup: bfloat16 on Ampere/Blackwell, float16 on older CUDA, float32 on MPS/CPU
     precision_str = "float32"
@@ -353,6 +399,15 @@ def main():
         step_ms = (time.time() - step_t0) * 1000.0
         losses.append(loss.item())
 
+        if use_wandb and (step % 10 == 0 or step == total_steps):
+            tokens_per_sec = (args.batch_size * args.block_size) / max(1e-4, step_ms / 1000.0)
+            wandb.log({
+                "step": step,
+                "train/loss": loss.item(),
+                "train/step_ms": step_ms,
+                "train/tokens_per_sec": tokens_per_sec,
+            })
+
         if step % eval_interval == 0 or step == total_steps:
             val_loss = evaluate_val_loss(
                 model,
@@ -361,6 +416,8 @@ def main():
                 autocast_ctx=autocast_ctx,
             )
             val_losses[step] = val_loss
+            if use_wandb:
+                wandb.log({"step": step, "val/loss": val_loss})
             print(
                 f"Step {step:04d}/{total_steps} | Train Loss: {loss.item():.4f} | Val Loss: {val_loss:.4f} | Step Time: {step_ms:.1f}ms"
             )
@@ -386,6 +443,13 @@ def main():
     else:
         # Monotonic convergence check if baseline file is not yet populated
         gate1_passed = bool(final_val_loss < initial_val_loss)
+
+    if use_wandb and wandb_run:
+        wandb.summary["final_val_loss"] = final_val_loss
+        wandb.summary["initial_val_loss"] = initial_val_loss
+        wandb.summary["gate1_passed"] = gate1_passed
+        wandb.summary["total_tokens"] = total_tokens
+        wandb.finish()
 
     print("\n--- Benchmark Summary ---")
     print(f"Elapsed: {elapsed_sec:.2f}s | Tokens seen: {total_tokens:,}")
