@@ -87,17 +87,20 @@ class FastTokenStream:
                 )
 
         if self.use_synthetic:
-            # Allocate a device-resident buffer to avoid host-device streaming bottleneck
+            # Allocate a structured synthetic buffer with learnable n-gram grammar
             synth_len = max(200_000, batch_size * block_size * 16)
             generator = torch.Generator(device="cpu").manual_seed(
                 seed + (0 if split == "train" else 1000)
             )
-            raw_tokens = torch.randint(
-                0, self.vocab_size, (synth_len,), generator=generator, dtype=torch.long
-            )
+            # 64 motifs of length 8 with Zipfian frequency to simulate language structure
+            vocab = min(1000, self.vocab_size)
+            motifs = torch.randint(1, vocab, (64, 8), generator=torch.Generator().manual_seed(42))
+            weights = torch.softmax(-torch.arange(64).float() / 10.0, dim=0)
+            chosen = torch.multinomial(weights, synth_len // 8 + 1, replacement=True, generator=generator)
+            raw_tokens = motifs[chosen].flatten()[:synth_len]
             self.synth_tokens = raw_tokens.to(self.device)
             print(
-                f"[{split}] Slicing from device-resident synthetic buffer ({synth_len:,} tokens)"
+                f"[{split}] Slicing from device-resident structured synthetic buffer ({synth_len:,} tokens)"
             )
 
     def get_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
