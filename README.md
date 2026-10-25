@@ -23,7 +23,7 @@ python scripts/train_nanogpt.py --optimizer symplectic_muon --steps 4000 --wandb
 ```
 
 ### Google Colab:
-Open `notebooks/colab_runner.ipynb` in Colab on a T4/L4/A100 GPU. Every notebook includes an automatic machine teardown guard (`runtime.unassign()`) to protect compute credits upon completion.
+Open `notebooks/colab_runner_symplectic_muon.ipynb` in Colab on a T4/L4/A100 GPU. Every notebook includes an automatic machine teardown guard (`runtime.unassign()`) to protect compute credits upon completion.
 
 ## Telemetry
 Native Weights & Biases support via `--wandb` (project: `moonshot-symplectic-muon`).
