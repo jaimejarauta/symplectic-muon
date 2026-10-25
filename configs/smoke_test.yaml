@@ -1,0 +1,25 @@
+# Symplectic Muon Smoke Test Configuration
+question: "Does thermostatted symplectic kinetic scaling converge stably on an ill-conditioned spectrum?"
+date: "2026-10-25"
+
+model:
+  d_in: 128
+  d_hidden: 256
+  d_out: 64
+
+optimization:
+  lr: 0.01
+  momentum: 0.95
+  weight_decay: 0.01
+  gamma_min: 0.5
+  gamma_max: 1.8
+  ema_alpha: 0.05
+  ns_steps: 5
+  steps: 300
+  batch_size: 64
+  seed: 2026
+
+pre_registered_rules:
+  pass_rule: "final_loss < initial_loss * 0.10"
+  kill_rule: "final_loss >= initial_loss * 0.50"
+  max_runtime_sec: 180

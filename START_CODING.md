@@ -1,0 +1,98 @@
+# Getting Started: symplectic-muon
+
+This document defines the exact workflow, metrics, and branching protocols for developing **Symplectic Muon** (Idea 03: Hamiltonian Matrix-Orthogonalized Optimization).
+
+---
+
+## 1. Environment & Setup
+
+```bash
+# 1. Create and activate virtual environment via uv
+uv venv .venv
+source .venv/bin/activate
+
+# 2. Install dependencies (strictly uv pip)
+uv pip install -e ".[dev]"
+
+# 3. Verify PyTorch installation and hardware
+.venv/bin/python -c "import torch; print('CUDA available:', torch.cuda.is_available(), '| Devices:', torch.cuda.device_count())"
+```
+
+---
+
+## 2. Git & Branching Protocol
+
+- **Protected Branch:** `main`. **Never commit, rebase, or push directly to `main`.**
+- **Active Feature Branch:** `feature/initial-implementation`.
+- **Workflow for New Tasks:**
+  ```bash
+  git checkout feature/initial-implementation
+  git checkout -b feat/task-name
+  # Implement code with tests (TDD)
+  .venv/bin/python -m pytest tests/
+  git add <touched_files>
+  git commit -m "feat: implement thermostatted kinetic scaling"
+  # Never git push. Notify the lead researcher when ready.
+  ```
+- **Commit Format:** `<type>: <what changed>` where type is one of `feat`, `fix`, `docs`, `refactor`, `test`, `exp`.
+- **Attribution Rule:** **Zero AI or Claude attribution anywhere** (no trailers, no commit notes, no comments).
+
+---
+
+## 3. Core Hypothesis, Metrics & Pre-Registered Criteria
+
+### The Question
+Does conserving Hamiltonian kinetic energy in Newton-Schulz polar updates accelerate escape from non-convex loss saddles and eliminate late-stage limit-cycle oscillations on ill-conditioned architectures?
+
+### Key Performance Indicators (KPIs)
+1. **Convergence Speedup:** Steps to reach validation loss threshold $L_{\text{target}}$ compared to standard Muon and AdamW.
+2. **Spectral Norm Invariant:** $\sigma_{\max}(P_{\text{orth}}) / \sigma_{\min}(P_{\text{orth}}) \le 1.15$ after 5 Newton-Schulz steps.
+3. **Kinetic Thermostat Stability:** Relative kinetic scaling $\gamma_t = \text{clamp}(\|P_t\|_F / \bar{K}_t, 0.5, 1.8)$ remains bounded without thermal explosion.
+4. **Wall-Clock Overhead:** Step execution time within $1.05\times$ of standard Muon ($< 5\%$ overhead).
+
+### Pre-Registered Rules
+- **Kill Criterion (Day 3 Gate):** If at step 2,000 on NanoGPT-124M (FineWeb-Edu), Symplectic Muon validation loss is higher than or equal to standard Muon ($L_{\text{sym}} \ge L_{\text{muon}}$), kill the project immediately and archive as a controlled null.
+- **Pulse Criterion:** If Symplectic Muon reaches standard Muon's target validation loss with $\ge 20\%$ fewer tokens, double down for held-out confirmation.
+
+---
+
+## 4. Weights & Biases (W&B) Setup
+
+```python
+import wandb
+
+wandb.init(
+    project="moonshot-symplectic-muon",
+    group="smoke-test-ill-conditioned",  # Group by scientific question
+    job_type="train",
+    name="symplectic-muon-124m-seed42",
+    config={
+        "lr": 0.02,
+        "momentum": 0.95,
+        "gamma_min": 0.5,
+        "gamma_max": 1.8,
+        "ema_alpha": 0.05,
+        "ns_steps": 5,
+        "manifest_digest": "sha256_here"
+    }
+)
+```
+
+---
+
+## 5. Day 2 Smoke Test Execution
+
+Before launching on a shared machine:
+```bash
+# 1. Busy check
+ps -eo pid,etime,pcpu,comm,args --sort=-pcpu | head
+nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
+free -g
+uptime
+
+# 2. Run unit tests first
+.venv/bin/python -m pytest tests/test_newton_schulz.py -v
+
+# 3. Launch smoke test (under 5 minutes)
+.venv/bin/python scripts/run_smoke.py --config configs/smoke_test.yaml
+```
