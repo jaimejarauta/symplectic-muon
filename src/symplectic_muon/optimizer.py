@@ -39,6 +39,70 @@ def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5, eps: float = 1e
         X = X.T
     return X.to(G.dtype)
 
+class StandardMuon(Optimizer):
+    """Standard Muon optimizer (Keller Jordan) with polar orthogonalization and aspect scaling."""
+
+    def __init__(
+        self,
+        params,
+        lr: float = 0.02,
+        momentum: float = 0.95,
+        weight_decay: float = 0.01,
+        steps: int = 5,
+        eps: float = 1e-7,
+    ):
+        defaults = dict(
+            lr=lr,
+            momentum=momentum,
+            weight_decay=weight_decay,
+            steps=steps,
+            eps=eps,
+        )
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            lr = group["lr"]
+            mu = group["momentum"]
+            wd = group["weight_decay"]
+            steps = group["steps"]
+            eps = group["eps"]
+
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                g = p.grad
+                state = self.state[p]
+
+                if "momentum_buffer" not in state:
+                    state["momentum_buffer"] = torch.zeros_like(p)
+                    state["step"] = 0
+
+                state["step"] += 1
+                buf = state["momentum_buffer"]
+                buf.mul_(mu).add_(g)
+
+                if p.ndim == 2 and min(p.shape) > 1:
+                    p_orth = zeropower_via_newtonschulz5(buf, steps=steps, eps=eps)
+                    d0, d1 = p.size(0), p.size(1)
+                    aspect_scale = max(1.0, math.sqrt(d0 / d1))
+                    update = aspect_scale * p_orth
+                else:
+                    update = buf
+
+                if wd != 0:
+                    p.mul_(1.0 - lr * wd)
+                p.add_(update, alpha=-lr)
+
+        return loss
+
+
 class SymplecticMuon(Optimizer):
     """Thermostatted semi-implicit symplectic Euler optimizer with polar orthogonalization."""
     def __init__(self, params, lr: float = 0.02, momentum: float = 0.95, weight_decay: float = 0.01,

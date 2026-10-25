@@ -13,12 +13,16 @@ behaviour of yours, mine wins. If a rule blocks something you need, stop and tel
 | Execution script for Day 2 smoke test | `scripts/run_smoke.py` |
 | Unattended execution watchdog & pre-flight busy check | `scripts/watchdog.sh` |
 | Unit tests for polar orthogonality & kinetic scaling | `tests/test_newton_schulz.py`, `tests/test_optimizer.py` |
+| NanoGPT-124M architecture & parameter partitioning | `src/symplectic_muon/nanogpt.py` |
+| Stage 2 benchmark training pipeline | `scripts/train_nanogpt.py` |
+| NanoGPT unit tests | `tests/test_nanogpt.py` |
 | Step-by-step onboarding, branching, W&B setup | `START_CODING.md` |
 
 ## Test Commands
-- Targeted unit tests: `.venv/bin/python -m pytest tests/test_newton_schulz.py -v`
-- Full test suite: `.venv/bin/python -m pytest tests/ -v`
+- Targeted unit tests: `.venv/bin/python -m pytest tests/test_nanogpt.py -v`
+- Full test suite: `.venv/bin/python -m pytest tests/test_nanogpt.py tests/test_newton_schulz.py -v`
 - End-to-end smoke test: `.venv/bin/python scripts/run_smoke.py --config configs/smoke_test.yaml`
+- Stage 2 training dry run: `.venv/bin/python scripts/train_nanogpt.py --dry-run`
 
 ---
 

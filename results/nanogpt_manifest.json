@@ -1,0 +1,21 @@
+{
+  "git_commit": "9ae7932898274346ac2078aa00bcd0911162494b",
+  "date": "2026-10-25T13:35:12.734545+00:00",
+  "optimizer": "symplectic_muon",
+  "lr": 0.01,
+  "adamw_lr": 0.001,
+  "weight_decay": 0.01,
+  "batch_size": 4,
+  "block_size": 1024,
+  "steps": 5,
+  "tokens_seen": 20480,
+  "initial_val_loss": 10.977344703674316,
+  "final_val_loss": 10.990677642822266,
+  "gate1_passed": false,
+  "gate1_criteria": "L_sym < L_muon at step 4000",
+  "elapsed_sec": 27.555235624313354,
+  "hardware": "mps",
+  "precision": "float32",
+  "dry_run": true,
+  "seed": 42
+}
