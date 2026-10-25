@@ -17,20 +17,35 @@ from symplectic_muon.spectral import compute_spectral_metrics
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/smoke_test.yaml")
+    parser.add_argument("--device", type=str, default=None, help="Device override (cuda, mps, cpu)")
+    parser.add_argument("--steps", type=int, default=None, help="Step override")
+    parser.add_argument("--batch-size", type=int, default=None, help="Batch size override")
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
 
-    torch.manual_seed(cfg["optimization"]["seed"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Running Symplectic Muon Smoke Test on: {device}")
+    # Device auto-detection: CUDA -> Apple Silicon MPS -> CPU
+    if args.device:
+        device = torch.device(args.device)
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cudnn.benchmark = True
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
 
+    dev_name = torch.cuda.get_device_name(0) if device.type == "cuda" else str(device)
+    print(f"Running Symplectic Muon Smoke Test on: {device} ({dev_name})")
+
+    torch.manual_seed(cfg["optimization"]["seed"])
     d_in = cfg["model"]["d_in"]
     d_hidden = cfg["model"]["d_hidden"]
     d_out = cfg["model"]["d_out"]
-    batch_size = cfg["optimization"]["batch_size"]
-    n_steps = cfg["optimization"]["steps"]
+    batch_size = args.batch_size or cfg["optimization"]["batch_size"]
+    n_steps = args.steps or cfg["optimization"]["steps"]
 
     # Generate ill-conditioned dataset with geometrically decaying singular values
     X = torch.randn(batch_size * 10, d_in, device=device)

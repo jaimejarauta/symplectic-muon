@@ -7,19 +7,34 @@ import torch
 from torch.optim.optimizer import Optimizer
 
 def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5, eps: float = 1e-7) -> torch.Tensor:
-    """Quintic Newton-Schulz polynomial mapping matrix to its polar factor."""
+    """Quintic Newton-Schulz polynomial mapping matrix to its polar factor.
+    Optimized with fused addmm operations and hardware-aware precision.
+    """
     assert G.ndim == 2
     a, b, c = 3.4445, -4.7750, 2.0315
-    X = G.bfloat16() if G.is_cuda else G.float()
+    
+    # Fast precision selection: bfloat16 on Ampere/Blackwell, float16 on T4/V100, float32 on CPU/MPS
+    if G.is_cuda and torch.cuda.is_bf16_supported():
+        X = G.bfloat16()
+    elif G.is_cuda:
+        X = G.half()
+    else:
+        X = G.float()
+
     # Normalize by Frobenius norm to guarantee singular values are strictly in (0, 1] < sqrt(3)
     X = X / (X.norm() + eps)
     transposed = X.size(0) > X.size(1)
     if transposed:
         X = X.T
+
     for _ in range(steps):
-        A = X @ X.T
-        B = b * A + c * (A @ A)
-        X = a * X + B @ X
+        # A = X @ X.T
+        A = torch.mm(X, X.T)
+        # B = b * A + c * (A @ A) -> single-pass fused GEMM: beta * mat + alpha * (mat1 @ mat2)
+        B = torch.addmm(A, A, A, beta=b, alpha=c)
+        # X = a * X + B @ X -> single-pass fused GEMM
+        X = torch.addmm(X, B, X, beta=a, alpha=1.0)
+
     if transposed:
         X = X.T
     return X.to(G.dtype)
