@@ -11,6 +11,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+if os.path.join(REPO_ROOT, "src") not in sys.path:
+    sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+
 from symplectic_muon.optimizer import SymplecticMuon
 from symplectic_muon.spectral import compute_spectral_metrics
 
