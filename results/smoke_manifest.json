@@ -1,0 +1,8 @@
+{
+  "config": "configs/smoke_test.yaml",
+  "date": "2026-10-25",
+  "initial_loss": 2.7841615676879883,
+  "final_loss": 0.0034028387162834406,
+  "passed": true,
+  "elapsed_sec": 0.912060022354126
+}
