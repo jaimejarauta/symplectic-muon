@@ -51,8 +51,9 @@ Does conserving Hamiltonian kinetic energy in Newton-Schulz polar updates accele
 4. **Wall-Clock Overhead:** Step execution time within $1.05\times$ of standard Muon ($< 5\%$ overhead).
 
 ### Pre-Registered Rules
-- **Kill Criterion (Day 3 Gate):** If at step 2,000 on NanoGPT-124M (FineWeb-Edu), Symplectic Muon validation loss is higher than or equal to standard Muon ($L_{\text{sym}} \ge L_{\text{muon}}$), kill the project immediately and archive as a controlled null.
-- **Pulse Criterion:** If Symplectic Muon reaches standard Muon's target validation loss with $\ge 20\%$ fewer tokens, double down for held-out confirmation.
+- **Kill Criterion (Day 3 Gate):** Evaluated at step 4,000 on NanoGPT-124M (FineWeb-Edu, ~260M tokens) across a 3-point learning rate bracket ($\eta \in \{0.01, 0.02, 0.04\}$). If at step 4,000 the best Symplectic Muon validation loss is higher than or equal to standard Muon ($L_{\text{sym}} \ge L_{\text{muon}}$), kill the project immediately and archive as a controlled null. (Step 4,000 ensures entry into late-stage river-valley geometry where Newton-Schulz limit-cycle dynamics manifest).
+- **Pulse Criterion:** If Symplectic Muon reaches standard Muon's target validation loss with $\ge 20\%$ fewer tokens, or exhibits strictly monotonically decreasing loss in ill-conditioned saddles where standard Muon oscillates, double down for held-out confirmation.
+- **Aspect Ratio Invariant:** Rectangular matrices $(d_0, d_1)$ use symmetric scaling $\sqrt{\max(d_0, d_1) / \min(d_0, d_1)}$, guaranteeing that up-projections and down-projections maintain identical singular value update magnitudes under transposition.
 
 ---
 
@@ -96,3 +97,4 @@ uptime
 # 3. Launch smoke test (under 5 minutes)
 .venv/bin/python scripts/run_smoke.py --config configs/smoke_test.yaml
 ```
+

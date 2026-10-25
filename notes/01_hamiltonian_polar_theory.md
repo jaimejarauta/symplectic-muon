@@ -21,9 +21,11 @@ As documented by Shen et al. (arXiv:2606.21514), because Newton-Schulz normalize
 
 ### The Solution: Thermostatted Kinetic Scaling
 Naive instantaneous scaling $\gamma_t = \frac{\|P_t\|_F}{\|P_{\text{orth}}\|_F}$ introduces stochastic "energy pumping" due to mini-batch variance $\mathbb{E}[\xi_t \xi_t^\top] \neq 0$.
-We introduce a Berendsen-inspired relative thermostat:
+We introduce a Berendsen-inspired relative thermostat with symmetric aspect compensation:
 $$\bar{K}_{t+1} = (1 - \alpha) \bar{K}_t + \alpha \|P_{t+1}\|_F$$
-$$\gamma_{t+1} = \text{clamp}\left( \frac{\|P_{t+1}\|_F}{\bar{K}_{t+1} + \epsilon}, 0.5, 1.8 \right) \cdot \sqrt{\max\left(1, \frac{d_1}{d_2}\right)}$$
+$$\gamma_{t+1} = \text{clamp}\left( \frac{\|P_{t+1}\|_F}{\bar{K}_{t+1} + \epsilon}, 0.5, 1.8 \right) \cdot \sqrt{\frac{\max(d_1, d_2)}{\min(d_1, d_2)}}$$
+
+The symmetric aspect ratio $\sqrt{\max(d_1, d_2) / \min(d_1, d_2)}$ guarantees that up-projection $(d_{\text{out}} > d_{\text{in}})$ and down-projection $(d_{\text{out}} < d_{\text{in}})$ receive identical Frobenius update magnitudes under transposition, eliminating asymmetry between expansion and contraction layers.
 
 ### Semi-Implicit Symplectic Euler Integration
 To preserve phase-space volume and avoid dissipative bias:
@@ -38,3 +40,4 @@ To preserve phase-space volume and avoid dissipative bias:
 1. **Spectral Uniformity:** For $P_{\text{orth}} = \text{NS}_5(P)$, the singular value ratio $\sigma_{\max} / \sigma_{\min} \le 1.15$.
 2. **Bounded Kinetic Scaling:** $0.5 \le \gamma_t / \sqrt{\max(1, d_1/d_2)} \le 1.8$ holds for all $t$.
 3. **Decoupled Partitioning:** Only 2D linear matrices are updated via Newton-Schulz; all 1D biases and normalization vectors remain on standard AdamW.
+

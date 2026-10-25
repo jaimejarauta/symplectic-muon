@@ -37,3 +37,4 @@ def compute_spectral_metrics(W: torch.Tensor, P: torch.Tensor, P_orth: torch.Ten
             "kinetic_p": kinetic_p,
             "kinetic_orth": kinetic_o,
         }
+

@@ -11,6 +11,7 @@ behaviour of yours, mine wins. If a rule blocks something you need, stop and tel
 | Spectral metrics (condition number, singular values) | `src/symplectic_muon/spectral.py` |
 | Smoke test configuration & pre-registered thresholds | `configs/smoke_test.yaml` |
 | Execution script for Day 2 smoke test | `scripts/run_smoke.py` |
+| Unattended execution watchdog & pre-flight busy check | `scripts/watchdog.sh` |
 | Unit tests for polar orthogonality & kinetic scaling | `tests/test_newton_schulz.py`, `tests/test_optimizer.py` |
 | Step-by-step onboarding, branching, W&B setup | `START_CODING.md` |
 
@@ -128,3 +129,4 @@ people. Colab is the overflow.
 
 - Only public data and permissive-licence code; record the licence of every dataset and model used.
 - Nothing destructive, no scraping against terms of service, no secrets in the repo.
+

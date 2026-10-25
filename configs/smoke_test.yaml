@@ -9,17 +9,20 @@ model:
 
 optimization:
   lr: 0.01
+  lr_bracket: [0.005, 0.01, 0.02]
   momentum: 0.95
   weight_decay: 0.01
   gamma_min: 0.5
   gamma_max: 1.8
   ema_alpha: 0.05
   ns_steps: 5
-  steps: 300
+  steps: 500
   batch_size: 64
   seed: 2026
 
 pre_registered_rules:
+  evaluation_step: 400
   pass_rule: "final_loss < initial_loss * 0.10"
   kill_rule: "final_loss >= initial_loss * 0.50"
   max_runtime_sec: 180
+

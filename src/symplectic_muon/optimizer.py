@@ -11,6 +11,7 @@ def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5, eps: float = 1e
     assert G.ndim == 2
     a, b, c = 3.4445, -4.7750, 2.0315
     X = G.bfloat16() if G.is_cuda else G.float()
+    # Normalize by Frobenius norm to guarantee singular values are strictly in (0, 1] < sqrt(3)
     X = X / (X.norm() + eps)
     transposed = X.size(0) > X.size(1)
     if transposed:
@@ -59,7 +60,9 @@ class SymplecticMuon(Optimizer):
                 if 'momentum_buffer' not in state:
                     state['momentum_buffer'] = torch.zeros_like(p)
                     state['running_norm'] = g.norm().item() + eps
+                    state['step'] = 0
 
+                state['step'] += 1
                 buf = state['momentum_buffer']
                 # Symplectic Euler: Kick momentum first
                 buf.mul_(mu).add_(g)
@@ -74,8 +77,9 @@ class SymplecticMuon(Optimizer):
                     rel_scale = current_norm / (state['running_norm'] + eps)
                     gamma = max(g_min, min(g_max, rel_scale))
                     
-                    # Aspect-ratio compensation for rectangular matrices
-                    aspect_scale = math.sqrt(max(1.0, p.size(0) / p.size(1)))
+                    # Symmetric aspect-ratio compensation: preserves invariant under transpose
+                    d0, d1 = p.size(0), p.size(1)
+                    aspect_scale = math.sqrt(max(d0, d1) / min(d0, d1))
                     update = (gamma * aspect_scale) * p_orth
                 else:
                     update = buf
@@ -86,3 +90,4 @@ class SymplecticMuon(Optimizer):
                 p.add_(update, alpha=-lr)
 
         return loss
+
