@@ -6,24 +6,28 @@ from typing import Dict
 import torch
 
 def compute_spectral_metrics(W: torch.Tensor, P: torch.Tensor, P_orth: torch.Tensor) -> Dict[str, float]:
-    """Computes singular value condition number, off-diagonal RMS, and kinetic ratio."""
+    """Computes singular value condition number, off-diagonal RMS, and kinetic ratio.
+    
+    Optimized by computing singular values directly from the Gram matrix eigenvalues,
+    eliminating redundant full SVD factorizations.
+    """
     with torch.no_grad():
         W_f = W.float()
         P_f = P.float()
         O_f = P_orth.float()
         
-        # Singular values of orthogonalized update
-        S = torch.linalg.svdvals(O_f)
-        s_max = S[0].item()
-        s_min = S[-1].item()
-        cond_num = s_max / max(1e-9, s_min)
-        
-        # Off-diagonal RMS of O * O^T
-        d_min = min(O_f.shape)
+        # Off-diagonal RMS and Gram matrix of O
         prod = O_f @ O_f.T if O_f.size(0) <= O_f.size(1) else O_f.T @ O_f
         diag = torch.diag(prod)
         off_diag = prod - torch.diag(diag)
         off_diag_rms = torch.sqrt(torch.mean(off_diag ** 2)).item()
+        
+        # Singular values directly via Gram matrix eigenvalues
+        eigvals = torch.linalg.eigvalsh(prod)
+        S = torch.sqrt(torch.clamp(eigvals, min=0.0))
+        s_min = S[0].item()
+        s_max = S[-1].item()
+        cond_num = s_max / max(1e-9, s_min)
         
         # Kinetic energy ratio
         kinetic_p = 0.5 * torch.sum(P_f ** 2).item()

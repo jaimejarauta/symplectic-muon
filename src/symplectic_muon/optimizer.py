@@ -83,6 +83,9 @@ class StandardMuon(Optimizer):
                 if "momentum_buffer" not in state:
                     state["momentum_buffer"] = torch.zeros_like(p)
                     state["step"] = 0
+                    if p.ndim == 2 and min(p.shape) > 1:
+                        d0, d1 = p.size(0), p.size(1)
+                        state["aspect_scale"] = max(1.0, math.sqrt(d0 / d1))
 
                 state["step"] += 1
                 buf = state["momentum_buffer"]
@@ -90,8 +93,7 @@ class StandardMuon(Optimizer):
 
                 if p.ndim == 2 and min(p.shape) > 1:
                     p_orth = zeropower_via_newtonschulz5(buf, steps=steps, eps=eps)
-                    d0, d1 = p.size(0), p.size(1)
-                    aspect_scale = max(1.0, math.sqrt(d0 / d1))
+                    aspect_scale = state.get("aspect_scale", max(1.0, math.sqrt(p.size(0) / p.size(1))))
                     update = aspect_scale * p_orth
                 else:
                     update = buf
@@ -140,6 +142,9 @@ class SymplecticMuon(Optimizer):
                     state['momentum_buffer'] = torch.zeros_like(p)
                     state['running_norm'] = g.norm().item() + eps
                     state['step'] = 0
+                    if p.ndim == 2 and min(p.shape) > 1:
+                        d0, d1 = p.size(0), p.size(1)
+                        state['aspect_scale'] = math.sqrt(max(d0, d1) / min(d0, d1))
 
                 state['step'] += 1
                 buf = state['momentum_buffer']
@@ -156,9 +161,8 @@ class SymplecticMuon(Optimizer):
                     rel_scale = current_norm / (state['running_norm'] + eps)
                     gamma = max(g_min, min(g_max, rel_scale))
                     
-                    # Symmetric aspect-ratio compensation: preserves invariant under transpose
-                    d0, d1 = p.size(0), p.size(1)
-                    aspect_scale = math.sqrt(max(d0, d1) / min(d0, d1))
+                    # Cached symmetric aspect-ratio compensation
+                    aspect_scale = state.get('aspect_scale', math.sqrt(max(p.size(0), p.size(1)) / min(p.size(0), p.size(1))))
                     update = (gamma * aspect_scale) * p_orth
                 else:
                     update = buf
