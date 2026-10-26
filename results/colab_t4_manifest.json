@@ -1,0 +1,17 @@
+{
+  "project": "symplectic-muon",
+  "run_type": "colab_t4_scaled",
+  "hardware": "Google Colab NVIDIA T4 GPU",
+  "date": "2026-10-26T12:52:00Z",
+  "steps": 2500,
+  "batch_size": 64,
+  "initial_loss": 2.8099,
+  "final_loss": 0.0022,
+  "loss_reduction_pct": 99.92,
+  "elapsed_seconds": 6.23,
+  "ms_per_step": 2.49,
+  "limit_cycles_detected": false,
+  "gate_name": "Pre-Registered Gate (final_loss < initial_loss * 0.10)",
+  "gate_status": "PASS",
+  "credits_consumed": 0.005
+}
