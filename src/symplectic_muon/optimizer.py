@@ -53,6 +53,7 @@ class StandardMuon(Optimizer):
         weight_decay: float = 0.01,
         steps: int = 5,
         eps: float = 1e-7,
+        nesterov: bool = True,
     ):
         defaults = dict(
             lr=lr,
@@ -60,6 +61,7 @@ class StandardMuon(Optimizer):
             weight_decay=weight_decay,
             steps=steps,
             eps=eps,
+            nesterov=nesterov,
         )
         super().__init__(params, defaults)
 
@@ -93,13 +95,14 @@ class StandardMuon(Optimizer):
                 state["step"] += 1
                 buf = state["momentum_buffer"]
                 buf.mul_(mu).add_(g)
+                direction = g.add(buf, alpha=mu) if group["nesterov"] else buf
 
                 if p.ndim == 2 and min(p.shape) > 1:
-                    p_orth = zeropower_via_newtonschulz5(buf, steps=steps, eps=eps)
+                    p_orth = zeropower_via_newtonschulz5(direction, steps=steps, eps=eps)
                     aspect_scale = state.get("aspect_scale", math.sqrt(max(p.size(0), p.size(1)) / min(p.size(0), p.size(1))))
                     update = aspect_scale * p_orth
                 else:
-                    update = buf
+                    update = direction
 
                 if wd != 0:
                     p.mul_(1.0 - lr * wd)
@@ -137,10 +140,10 @@ class SymplecticMuon(Optimizer):
     """Thermostatted semi-implicit symplectic Euler optimizer with polar orthogonalization."""
     def __init__(self, params, lr: float = 0.02, momentum: float = 0.95, weight_decay: float = 0.01,
                  steps: int = 5, eps: float = 1e-7, gamma_min: float = 0.5, gamma_max: float = 1.8,
-                 ema_alpha: float = 0.05):
+                 ema_alpha: float = 0.05, nesterov: bool = True):
         defaults = dict(lr=lr, momentum=momentum, weight_decay=weight_decay,
                         steps=steps, eps=eps, gamma_min=gamma_min,
-                        gamma_max=gamma_max, ema_alpha=ema_alpha)
+                        gamma_max=gamma_max, ema_alpha=ema_alpha, nesterov=nesterov)
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -178,10 +181,11 @@ class SymplecticMuon(Optimizer):
                 buf = state['momentum_buffer']
                 # Symplectic Euler: Kick momentum first
                 buf.mul_(mu).add_(g)
+                direction = g.add(buf, alpha=mu) if group['nesterov'] else buf
 
                 # Only 2D hidden matrices receive Newton-Schulz orthogonalization
                 if p.ndim == 2 and min(p.shape) > 1:
-                    p_orth = zeropower_via_newtonschulz5(buf, steps=steps, eps=eps)
+                    p_orth = zeropower_via_newtonschulz5(direction, steps=steps, eps=eps)
                     
                     # Thermostatted Kinetic Scaling (damping when momentum is hotter than running mean)
                     current_norm = buf.norm()  # Device tensor: no host sync
@@ -190,12 +194,16 @@ class SymplecticMuon(Optimizer):
                     else:
                         state['running_norm'].lerp_(current_norm, alpha)
                     gamma = (state['running_norm'] / (current_norm + eps)).clamp_(g_min, g_max)
+                    # Hold gamma = 1 while the momentum buffer fills (~3/(1-mu) steps); the EMA lags a growing
+                    # ||buf|| and would otherwise act as a hidden 0.5x LR warm-up
+                    if state['step'] <= math.ceil(3.0 / max(1e-3, 1.0 - mu)):
+                        gamma = torch.ones_like(gamma)
                     
                     # Cached symmetric aspect-ratio compensation
                     aspect_scale = state.get('aspect_scale', math.sqrt(max(p.size(0), p.size(1)) / min(p.size(0), p.size(1))))
                     update = (gamma * aspect_scale) * p_orth
                 else:
-                    update = buf
+                    update = direction
 
                 # Decoupled weight decay + Drift coordinate update
                 if wd != 0:

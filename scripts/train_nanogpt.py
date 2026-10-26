@@ -67,6 +67,7 @@ class FastTokenStream:
         vocab_size: int = 50257,
         seed: int = 42,
         procedural: bool = False,
+        data_seed: Optional[int] = None,
     ):
         self.block_size = block_size
         self.batch_size = batch_size
@@ -95,10 +96,12 @@ class FastTokenStream:
         if self.use_synthetic:
             # 64 motifs of length 8 with Zipfian frequency to simulate language structure
             vocab = min(1000, self.vocab_size)
+            # One motif table per data_seed (shared by train and val); the sampled stream differs by split
+            table_gen = torch.Generator(device="cpu").manual_seed(seed if data_seed is None else data_seed)
+            motifs_cpu = torch.randint(1, vocab, (64, 8), generator=table_gen)
             gen = torch.Generator(device="cpu").manual_seed(
                 seed + (0 if split == "train" else 1000)
             )
-            motifs_cpu = torch.randint(1, vocab, (64, 8), generator=gen)
             self.motifs = motifs_cpu.to(self.device)
             self.motif_weights = torch.softmax(
                 -torch.arange(64, device=self.device).float() / 10.0, dim=0
@@ -391,7 +394,7 @@ def main():
         # Baseline: all parameters updated via decoupled AdamW
         opt_all = torch.optim.AdamW(
             [
-                {"params": muon_params, "lr": args.lr, "weight_decay": args.weight_decay},
+                {"params": muon_params, "lr": args.adamw_lr, "weight_decay": args.weight_decay},  # Muon's lr is not an AdamW lr
                 {"params": adamw_params, "lr": args.adamw_lr, "weight_decay": args.weight_decay},
             ],
             betas=(0.9, 0.95),
@@ -418,6 +421,7 @@ def main():
         vocab_size=args.vocab_size,
         seed=args.seed + 1,
         procedural=False,  # Fixed distribution for validation reproducibility
+        data_seed=args.seed,
     )
 
     total_steps = 5 if args.dry_run else args.steps

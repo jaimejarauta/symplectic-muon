@@ -54,3 +54,31 @@ def test_symmetric_aspect_scaling():
     expected_ratio = math.sqrt(d_max / d_min)
     assert expected_ratio == 2.0
 
+
+
+def test_gamma_not_clamped_during_warmup():
+    """Under a constant gradient the thermostat must not hide a 0.5x LR warm-up relative to StandardMuon."""
+    from symplectic_muon.optimizer import StandardMuon
+    torch.manual_seed(0)
+    g = torch.randn(32, 32)
+    ps, pm = torch.nn.Parameter(torch.zeros(32, 32)), torch.nn.Parameter(torch.zeros(32, 32))
+    sym, std = SymplecticMuon([ps], lr=0.01, weight_decay=0.0), StandardMuon([pm], lr=0.01, weight_decay=0.0)
+    for _ in range(200):
+        prev_s, prev_m = ps.detach().clone(), pm.detach().clone()
+        ps.grad, pm.grad = g.clone(), g.clone()
+        sym.step(); std.step()
+        ratio = ((ps - prev_s).norm() / (pm - prev_m).norm()).item()
+        assert ratio > 0.8, ratio
+
+
+def test_nesterov_update_direction():
+    from symplectic_muon.optimizer import StandardMuon
+    torch.manual_seed(0)
+    g = torch.randn(16, 32)
+    p = torch.nn.Parameter(torch.zeros(16, 32))
+    opt = StandardMuon([p], lr=1.0, momentum=0.9, weight_decay=0.0, nesterov=True)
+    p.grad = g.clone()
+    opt.step()
+    # buf = g after one step; nesterov direction = g + 0.9 * buf = 1.9 g
+    want = -math.sqrt(32 / 16) * zeropower_via_newtonschulz5(1.9 * g)
+    assert torch.allclose(p.data, want, atol=1e-5)
