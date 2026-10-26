@@ -113,8 +113,8 @@ class StandardMuon(Optimizer):
         total_kinetic_energy = 0.0
         gammas = []
         for group in self.param_groups:
-            eps = group["eps"]
-            g_min, g_max = group["gamma_min"], group["gamma_max"]
+            eps = group.get("eps", 1e-7)
+            g_min, g_max = group.get("gamma_min", 0.5), group.get("gamma_max", 1.8)
             for p in group["params"]:
                 state = self.state.get(p, {})
                 buf = state.get("momentum_buffer")
@@ -210,8 +210,8 @@ class SymplecticMuon(Optimizer):
         total_kinetic_energy = 0.0
         gammas = []
         for group in self.param_groups:
-            eps = group["eps"]
-            g_min, g_max = group["gamma_min"], group["gamma_max"]
+            eps = group.get("eps", 1e-7)
+            g_min, g_max = group.get("gamma_min", 0.5), group.get("gamma_max", 1.8)
             for p in group["params"]:
                 state = self.state.get(p, {})
                 buf = state.get("momentum_buffer")
