@@ -85,17 +85,22 @@ def main():
     if hasattr(signal, 'SIGALRM'):
         signal.alarm(0)
 
-    # 4. Install Dependencies
-    print("\n[Runner] Ensuring required Python dependencies...")
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    repo_src = os.path.join(repo_root, "src")
+
+    # 4. Install Dependencies & Local Package
+    print("\n[Runner] Ensuring required Python dependencies and package installation...")
     subprocess.run([
-        sys.executable, "-m", "pip", "install", "-q",
+        sys.executable, "-m", "pip", "install", "-q", "-e", repo_root,
         "wandb"
     ], check=True)
 
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     train_script = os.path.join(repo_root, "scripts", "train_nanogpt.py")
     spectral_script = os.path.join(repo_root, "scripts", "eval_spectral_health.py")
     wandb_mode = os.environ.get("WANDB_MODE", "online")
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{repo_src}:{env.get('PYTHONPATH', '')}"
 
     steps_per_arm = 2000
     batch_size = 16
@@ -120,7 +125,7 @@ def main():
         "--wandb-mode", wandb_mode,
         "--wandb-name", "standard-muon-nanogpt-l4"
     ]
-    subprocess.run(cmd_standard, env=os.environ.copy())
+    subprocess.run(cmd_standard, env=env)
 
     # -------------------------------------------------------------
     # ARM 2: Symplectic Muon (Ours)
@@ -142,7 +147,7 @@ def main():
         "--wandb-mode", wandb_mode,
         "--wandb-name", "symplectic-muon-nanogpt-l4"
     ]
-    subprocess.run(cmd_symplectic, env=os.environ.copy())
+    subprocess.run(cmd_symplectic, env=env)
 
     # -------------------------------------------------------------
     # ARM 3: AdamW (Standard Decoupled Baseline)
@@ -163,7 +168,7 @@ def main():
         "--wandb-mode", wandb_mode,
         "--wandb-name", "adamw-baseline-nanogpt-l4"
     ]
-    subprocess.run(cmd_adamw, env=os.environ.copy())
+    subprocess.run(cmd_adamw, env=env)
 
     # -------------------------------------------------------------
     # Post-Bakeoff: SVD Spectral Health Audit
@@ -178,7 +183,7 @@ def main():
             "--checkpoint", ckpt_path,
             "--output-manifest", "results/spectral_health_manifest.json"
         ]
-        subprocess.run(cmd_spectral, env=os.environ.copy())
+        subprocess.run(cmd_spectral, env=env)
 
     # -------------------------------------------------------------
     # 6. Flush & Sync Offline W&B Runs
@@ -198,3 +203,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

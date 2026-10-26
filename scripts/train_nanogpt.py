@@ -15,6 +15,10 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+repo_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if repo_src not in sys.path:
+    sys.path.insert(0, repo_src)
+
 from symplectic_muon.nanogpt import GPTConfig, NanoGPT, partition_parameters
 from symplectic_muon.optimizer import StandardMuon, SymplecticMuon
 
