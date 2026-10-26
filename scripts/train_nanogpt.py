@@ -246,6 +246,8 @@ def main():
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
+    import numpy as np
+    np.random.seed(args.seed)
     device, dev_name = resolve_device(args.device)
 
     # Initialize W&B tracking if requested or WANDB_API_KEY is present
@@ -270,10 +272,10 @@ def main():
             print(f"[W&B Warning] Failed to initialize wandb: {e}. Continuing without W&B.")
             use_wandb = False
 
-    # Precision setup: bfloat16 on Ampere/Blackwell, float16 on older CUDA, float32 on MPS/CPU
+    # Precision setup: bfloat16 on Ampere/Blackwell (sm_80+), float16 on older CUDA, float32 on MPS/CPU
     precision_str = "float32"
     if device.type == "cuda":
-        if torch.cuda.is_bf16_supported():
+        if torch.cuda.get_device_capability() >= (8, 0):
             autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
             precision_str = "bfloat16"
         else:
@@ -284,6 +286,8 @@ def main():
         precision_str = "bfloat16-cpu"
     else:
         autocast_ctx = nullcontext()
+
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda" and precision_str == "float16"))
 
     print(
         f"Stage 2 NanoGPT-124M | Optimizer: {args.optimizer} | Device: {device} ({dev_name}) | Precision: {precision_str}"
@@ -393,11 +397,17 @@ def main():
         with autocast_ctx:
             _, loss = model(x, y)
 
-        loss.backward()
+        scaler.scale(loss).backward()
+        for opt in optimizers:
+            scaler.unscale_(opt)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
+        lr_mult = min(1.0, step / 200) * (0.5 * (1 + math.cos(math.pi * step / total_steps)))
         for opt in optimizers:
-            opt.step()
+            for g in opt.param_groups:
+                g["lr"] = g.setdefault("base_lr", g["lr"]) * lr_mult
+            scaler.step(opt)
+        scaler.update()
 
         step_ms = (time.time() - step_t0) * 1000.0
         losses.append(loss.item())
@@ -443,9 +453,11 @@ def main():
 
     if args.optimizer == "symplectic_muon" and baseline_muon_val_loss is not None:
         gate1_passed = bool(final_val_loss < baseline_muon_val_loss)
-    else:
-        # Monotonic convergence check if baseline file is not yet populated
+    elif args.optimizer != "symplectic_muon":
         gate1_passed = bool(final_val_loss < initial_val_loss)
+    else:
+        # Pre-registered gate requires comparative standard_muon baseline file
+        gate1_passed = None
 
     if use_wandb and wandb_run:
         wandb.summary["final_val_loss"] = final_val_loss

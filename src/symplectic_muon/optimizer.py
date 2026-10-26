@@ -14,10 +14,10 @@ def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5, eps: float = 1e
     a, b, c = 3.4445, -4.7750, 2.0315
     orig_dtype = G.dtype
     
-    # Preserve full precision if fp32; use bf16 only if explicitly enabled or input is already half/bf16
+    # Preserve full precision if fp32; use bf16 only if sm_80+ native bf16 support
     if precision == "fp32" or G.dtype == torch.float32:
         X = G.float()
-    elif precision == "auto" and G.is_cuda and torch.cuda.is_bf16_supported():
+    elif precision == "auto" and G.is_cuda and torch.cuda.get_device_capability(G.device) >= (8, 0):
         X = G.bfloat16()
     elif G.is_cuda and precision != "fp32":
         X = G.half()
@@ -88,7 +88,7 @@ class StandardMuon(Optimizer):
                     state["step"] = 0
                     if p.ndim == 2 and min(p.shape) > 1:
                         d0, d1 = p.size(0), p.size(1)
-                        state["aspect_scale"] = max(1.0, math.sqrt(d0 / d1))
+                        state["aspect_scale"] = math.sqrt(max(d0, d1) / min(d0, d1))
 
                 state["step"] += 1
                 buf = state["momentum_buffer"]
@@ -96,7 +96,7 @@ class StandardMuon(Optimizer):
 
                 if p.ndim == 2 and min(p.shape) > 1:
                     p_orth = zeropower_via_newtonschulz5(buf, steps=steps, eps=eps)
-                    aspect_scale = state.get("aspect_scale", max(1.0, math.sqrt(p.size(0) / p.size(1))))
+                    aspect_scale = state.get("aspect_scale", math.sqrt(max(p.size(0), p.size(1)) / min(p.size(0), p.size(1))))
                     update = aspect_scale * p_orth
                 else:
                     update = buf
@@ -143,7 +143,7 @@ class SymplecticMuon(Optimizer):
                 # State initialization
                 if 'momentum_buffer' not in state:
                     state['momentum_buffer'] = torch.zeros_like(p)
-                    state['running_norm'] = g.norm().item() + eps
+                    state['running_norm'] = None  # Seeded from buf after first kick
                     state['step'] = 0
                     if p.ndim == 2 and min(p.shape) > 1:
                         d0, d1 = p.size(0), p.size(1)
@@ -158,11 +158,13 @@ class SymplecticMuon(Optimizer):
                 if p.ndim == 2 and min(p.shape) > 1:
                     p_orth = zeropower_via_newtonschulz5(buf, steps=steps, eps=eps)
                     
-                    # Thermostatted Kinetic Scaling (see notes/01_hamiltonian_polar_theory.md)
-                    current_norm = buf.norm().item()
-                    state['running_norm'] = (1.0 - alpha) * state['running_norm'] + alpha * current_norm
-                    rel_scale = current_norm / (state['running_norm'] + eps)
-                    gamma = max(g_min, min(g_max, rel_scale))
+                    # Thermostatted Kinetic Scaling (damping when momentum is hotter than running mean)
+                    current_norm = buf.norm()  # Device tensor: no host sync
+                    if state['running_norm'] is None:
+                        state['running_norm'] = current_norm.clone()
+                    else:
+                        state['running_norm'].lerp_(current_norm, alpha)
+                    gamma = (state['running_norm'] / (current_norm + eps)).clamp_(g_min, g_max)
                     
                     # Cached symmetric aspect-ratio compensation
                     aspect_scale = state.get('aspect_scale', math.sqrt(max(p.size(0), p.size(1)) / min(p.size(0), p.size(1))))
