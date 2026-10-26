@@ -6,17 +6,20 @@ import math
 import torch
 from torch.optim.optimizer import Optimizer
 
-def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5, eps: float = 1e-7) -> torch.Tensor:
+def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5, eps: float = 1e-7, precision: str = "auto") -> torch.Tensor:
     """Quintic Newton-Schulz polynomial mapping matrix to its polar factor.
     Optimized with fused addmm operations and hardware-aware precision.
     """
     assert G.ndim == 2
     a, b, c = 3.4445, -4.7750, 2.0315
+    orig_dtype = G.dtype
     
-    # Fast precision selection: bfloat16 on Ampere/Blackwell, float16 on T4/V100, float32 on CPU/MPS
-    if G.is_cuda and torch.cuda.is_bf16_supported():
+    # Preserve full precision if fp32; use bf16 only if explicitly enabled or input is already half/bf16
+    if precision == "fp32" or G.dtype == torch.float32:
+        X = G.float()
+    elif precision == "auto" and G.is_cuda and torch.cuda.is_bf16_supported():
         X = G.bfloat16()
-    elif G.is_cuda:
+    elif G.is_cuda and precision != "fp32":
         X = G.half()
     else:
         X = G.float()
