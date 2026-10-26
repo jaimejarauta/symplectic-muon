@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Single-Command Self-Healing Google Colab Runner for Symplectic-Muon.
+Executes the comprehensive 3-arm NanoGPT-124M optimizer bake-off:
+  Arm 1: Standard Muon (Baseline)
+  Arm 2: Symplectic Muon (Ours with phase-space momentum)
+  Arm 3: AdamW (Standard decoupled weight decay baseline)
+Followed by SVD spectral health audit and automatic VM teardown.
+"""
+
+import os
+import sys
+import signal
+import subprocess
+
+def main():
+    print("=" * 70)
+    print("SYMPLECTIC-MUON: 3-ARM NANOGPT OPTIMIZER BAKE-OFF (STAGE 2)")
+    print("=" * 70)
+
+    # 1. Credit Guard: Strict 60-second timeout for any interactive prompt
+    def timeout_handler(signum, frame):
+        print("\n[Credit Guard Alert] Interactive auth timed out (60s without input)!")
+        print("[Credit Guard Alert] Unassigning Colab GPU immediately to prevent idle burn...")
+        try:
+            from google.colab import runtime
+            runtime.unassign()
+        except Exception:
+            pass
+        sys.exit(1)
+
+    if hasattr(signal, 'SIGALRM'):
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(60)
+
+    # 2. Multi-Candidate Colab Secrets Search
+    wandb_key = os.environ.get("WANDB_API_KEY")
+    if not wandb_key:
+        try:
+            from google.colab import userdata
+            candidate_keys = [
+                'WANDB_API_KEY', 'wandb_api_key', 'WANDB_KEY', 'wandb_key',
+                'wandb', 'WANDB', 'wandb_token', 'WANDB_TOKEN', 'API_KEY', 'api_key'
+            ]
+            for k in candidate_keys:
+                try:
+                    val = userdata.get(k)
+                    if val and len(val.strip()) >= 20:
+                        wandb_key = val.strip()
+                        print(f"[W&B Guard] Detected API key from Colab Secrets: '{k}'")
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # Check ~/.netrc as fallback
+    netrc_path = os.path.expanduser('~/.netrc')
+    if not wandb_key and os.path.exists(netrc_path):
+        try:
+            with open(netrc_path) as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 2 and parts[0] == 'password' and len(parts[1]) >= 20:
+                        wandb_key = parts[1]
+                        print("[W&B Guard] Restored API key from ~/.netrc")
+                        break
+        except Exception:
+            pass
+
+    # 3. Authenticate or Fallback to Offline Mode
+    if wandb_key:
+        os.environ['WANDB_API_KEY'] = wandb_key
+        os.environ['WANDB_MODE'] = 'online'
+        try:
+            import wandb
+            wandb.login(key=wandb_key, relogin=False)
+            print("[W&B Guard] Authenticated successfully in online mode.")
+        except Exception as e:
+            print(f"[W&B Guard Warning] Login notice: {e}. Will sync after completion.")
+    else:
+        print("[W&B Guard Notice] No W&B key detected. Running in offline mode (never hangs).")
+        os.environ['WANDB_MODE'] = 'offline'
+
+    # Clear interactive timeout alarm now that auth is resolved
+    if hasattr(signal, 'SIGALRM'):
+        signal.alarm(0)
+
+    # 4. Install Dependencies
+    print("\n[Runner] Ensuring required Python dependencies...")
+    subprocess.run([
+        sys.executable, "-m", "pip", "install", "-q",
+        "wandb"
+    ], check=True)
+
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    train_script = os.path.join(repo_root, "scripts", "train_nanogpt.py")
+    spectral_script = os.path.join(repo_root, "scripts", "eval_spectral_health.py")
+    wandb_mode = os.environ.get("WANDB_MODE", "online")
+
+    steps_per_arm = 2000
+    batch_size = 16
+    block_size = 256
+
+    # -------------------------------------------------------------
+    # ARM 1: Standard Muon (Baseline)
+    # -------------------------------------------------------------
+    print("\n" + "=" * 65)
+    print(f">> RUNNING ARM 1/3: Standard Muon ({steps_per_arm} steps)")
+    print("=" * 65)
+    cmd_standard = [
+        sys.executable, train_script,
+        "--optimizer", "standard_muon",
+        "--steps", str(steps_per_arm),
+        "--batch-size", str(batch_size),
+        "--block-size", str(block_size),
+        "--procedural-stream",
+        "--manifest-path", "results/nanogpt_standard_muon_manifest.json",
+        "--wandb",
+        "--wandb-project", "research-projekts",
+        "--wandb-mode", wandb_mode,
+        "--wandb-name", "standard-muon-nanogpt-l4"
+    ]
+    subprocess.run(cmd_standard, env=os.environ.copy())
+
+    # -------------------------------------------------------------
+    # ARM 2: Symplectic Muon (Ours)
+    # -------------------------------------------------------------
+    print("\n" + "=" * 65)
+    print(f">> RUNNING ARM 2/3: Symplectic Muon ({steps_per_arm} steps)")
+    print("=" * 65)
+    cmd_symplectic = [
+        sys.executable, train_script,
+        "--optimizer", "symplectic_muon",
+        "--steps", str(steps_per_arm),
+        "--batch-size", str(batch_size),
+        "--block-size", str(block_size),
+        "--procedural-stream",
+        "--save-checkpoint",
+        "--manifest-path", "results/nanogpt_symplectic_muon_manifest.json",
+        "--wandb",
+        "--wandb-project", "research-projekts",
+        "--wandb-mode", wandb_mode,
+        "--wandb-name", "symplectic-muon-nanogpt-l4"
+    ]
+    subprocess.run(cmd_symplectic, env=os.environ.copy())
+
+    # -------------------------------------------------------------
+    # ARM 3: AdamW (Standard Decoupled Baseline)
+    # -------------------------------------------------------------
+    print("\n" + "=" * 65)
+    print(f">> RUNNING ARM 3/3: AdamW Baseline ({steps_per_arm} steps)")
+    print("=" * 65)
+    cmd_adamw = [
+        sys.executable, train_script,
+        "--optimizer", "adamw",
+        "--steps", str(steps_per_arm),
+        "--batch-size", str(batch_size),
+        "--block-size", str(block_size),
+        "--procedural-stream",
+        "--manifest-path", "results/nanogpt_adamw_manifest.json",
+        "--wandb",
+        "--wandb-project", "research-projekts",
+        "--wandb-mode", wandb_mode,
+        "--wandb-name", "adamw-baseline-nanogpt-l4"
+    ]
+    subprocess.run(cmd_adamw, env=os.environ.copy())
+
+    # -------------------------------------------------------------
+    # Post-Bakeoff: SVD Spectral Health Audit
+    # -------------------------------------------------------------
+    ckpt_path = "results/best_symplectic_muon_checkpoint.pt"
+    if os.path.exists(ckpt_path):
+        print("\n" + "=" * 65)
+        print(">> RUNNING SVD SPECTRAL HEALTH AUDIT")
+        print("=" * 65)
+        cmd_spectral = [
+            sys.executable, spectral_script,
+            "--checkpoint", ckpt_path,
+            "--output-manifest", "results/spectral_health_manifest.json"
+        ]
+        subprocess.run(cmd_spectral, env=os.environ.copy())
+
+    # -------------------------------------------------------------
+    # 6. Flush & Sync Offline W&B Runs
+    # -------------------------------------------------------------
+    print("\n[Runner] Syncing all W&B runs to cloud...")
+    subprocess.run("wandb sync --include-offline $(find /tmp/wandb ./wandb -type d -name 'offline-run-*' 2>/dev/null) 2>/dev/null || true", shell=True)
+
+    # -------------------------------------------------------------
+    # 7. Credit Guard: Teardown VM to save credits
+    # -------------------------------------------------------------
+    try:
+        from google.colab import runtime
+        print("\n[Credit Guard] Bake-off complete. Unassigning GPU to save Colab credits...")
+        runtime.unassign()
+    except Exception as e:
+        print(f"[Credit Guard] Teardown notice: {e}")
+
+if __name__ == "__main__":
+    main()
