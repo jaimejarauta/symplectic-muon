@@ -107,6 +107,31 @@ class StandardMuon(Optimizer):
 
         return loss
 
+    @torch.no_grad()
+    def get_phase_space_diagnostics(self) -> dict:
+        """Computes phase space diagnostics: kinetic energy T, running norm, gamma stats."""
+        total_kinetic_energy = 0.0
+        gammas = []
+        for group in self.param_groups:
+            eps = group["eps"]
+            g_min, g_max = group["gamma_min"], group["gamma_max"]
+            for p in group["params"]:
+                state = self.state.get(p, {})
+                buf = state.get("momentum_buffer")
+                if buf is not None:
+                    total_kinetic_energy += 0.5 * (buf.norm() ** 2).item()
+                    if state.get("running_norm") is not None and p.ndim == 2 and min(p.shape) > 1:
+                        current_norm = buf.norm()
+                        gamma = (state["running_norm"] / (current_norm + eps)).clamp(g_min, g_max).item()
+                        gammas.append(gamma)
+        mean_gamma = float(sum(gammas) / max(1, len(gammas))) if gammas else 1.0
+        return {
+            "kinetic_energy": total_kinetic_energy,
+            "mean_gamma": mean_gamma,
+            "min_gamma": float(min(gammas)) if gammas else 1.0,
+            "max_gamma": float(max(gammas)) if gammas else 1.0,
+        }
+
 
 class SymplecticMuon(Optimizer):
     """Thermostatted semi-implicit symplectic Euler optimizer with polar orthogonalization."""
@@ -178,4 +203,29 @@ class SymplecticMuon(Optimizer):
                 p.add_(update, alpha=-lr)
 
         return loss
+
+    @torch.no_grad()
+    def get_phase_space_diagnostics(self) -> dict:
+        """Computes phase space diagnostics: kinetic energy T, running norm, gamma stats."""
+        total_kinetic_energy = 0.0
+        gammas = []
+        for group in self.param_groups:
+            eps = group["eps"]
+            g_min, g_max = group["gamma_min"], group["gamma_max"]
+            for p in group["params"]:
+                state = self.state.get(p, {})
+                buf = state.get("momentum_buffer")
+                if buf is not None:
+                    total_kinetic_energy += 0.5 * (buf.norm() ** 2).item()
+                    if state.get("running_norm") is not None and p.ndim == 2 and min(p.shape) > 1:
+                        current_norm = buf.norm()
+                        gamma = (state["running_norm"] / (current_norm + eps)).clamp(g_min, g_max).item()
+                        gammas.append(gamma)
+        mean_gamma = float(sum(gammas) / max(1, len(gammas))) if gammas else 1.0
+        return {
+            "kinetic_energy": total_kinetic_energy,
+            "mean_gamma": mean_gamma,
+            "min_gamma": float(min(gammas)) if gammas else 1.0,
+            "max_gamma": float(max(gammas)) if gammas else 1.0,
+        }
 

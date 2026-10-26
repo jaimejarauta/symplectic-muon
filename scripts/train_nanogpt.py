@@ -62,6 +62,7 @@ class FastTokenStream:
         device: torch.device,
         vocab_size: int = 50257,
         seed: int = 42,
+        procedural: bool = False,
     ):
         self.block_size = block_size
         self.batch_size = batch_size
@@ -70,6 +71,7 @@ class FastTokenStream:
         self.split = split
         self.use_synthetic = True
         self.data = None
+        self.procedural = procedural
 
         if data_path and os.path.exists(data_path):
             try:
@@ -87,21 +89,35 @@ class FastTokenStream:
                 )
 
         if self.use_synthetic:
-            # Allocate a structured synthetic buffer with learnable n-gram grammar
-            synth_len = max(200_000, batch_size * block_size * 16)
-            generator = torch.Generator(device="cpu").manual_seed(
-                seed + (0 if split == "train" else 1000)
-            )
             # 64 motifs of length 8 with Zipfian frequency to simulate language structure
             vocab = min(1000, self.vocab_size)
-            motifs = torch.randint(1, vocab, (64, 8), generator=torch.Generator().manual_seed(42))
-            weights = torch.softmax(-torch.arange(64).float() / 10.0, dim=0)
-            chosen = torch.multinomial(weights, synth_len // 8 + 1, replacement=True, generator=generator)
-            raw_tokens = motifs[chosen].flatten()[:synth_len]
-            self.synth_tokens = raw_tokens.to(self.device)
-            print(
-                f"[{split}] Slicing from device-resident structured synthetic buffer ({synth_len:,} tokens)"
+            gen = torch.Generator(device="cpu").manual_seed(
+                seed + (0 if split == "train" else 1000)
             )
+            motifs_cpu = torch.randint(1, vocab, (64, 8), generator=gen)
+            self.motifs = motifs_cpu.to(self.device)
+            self.motif_weights = torch.softmax(
+                -torch.arange(64, device=self.device).float() / 10.0, dim=0
+            )
+
+            if not self.procedural:
+                # Pre-allocated fixed synthetic buffer for baseline comparability
+                synth_len = max(200_000, batch_size * block_size * 16)
+                chosen = torch.multinomial(
+                    torch.softmax(-torch.arange(64).float() / 10.0, dim=0),
+                    synth_len // 8 + 1,
+                    replacement=True,
+                    generator=gen,
+                )
+                raw_tokens = motifs_cpu[chosen].flatten()[:synth_len]
+                self.synth_tokens = raw_tokens.to(self.device)
+                print(
+                    f"[{split}] Slicing from device-resident structured synthetic buffer ({synth_len:,} tokens)"
+                )
+            else:
+                print(
+                    f"[{split}] Procedural continuous token generator active (infinite non-repeating stream)"
+                )
 
     def get_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """Fetch next batch with pinned memory for CUDA and num_workers=0."""
@@ -123,6 +139,15 @@ class FastTokenStream:
             else:
                 x = torch.from_numpy(x_np).to(self.device)
                 y = torch.from_numpy(y_np).to(self.device)
+            return x, y
+        elif self.use_synthetic and self.procedural:
+            # Procedural dynamic batch generation directly on device: B x (T + 1)
+            tokens_needed = self.batch_size * (self.block_size + 1)
+            num_motifs = (tokens_needed + 7) // 8
+            chosen = torch.multinomial(self.motif_weights, num_motifs, replacement=True)
+            seq = self.motifs[chosen].flatten()[:tokens_needed].view(self.batch_size, self.block_size + 1)
+            x = seq[:, :self.block_size].contiguous()
+            y = seq[:, 1:self.block_size + 1].contiguous()
             return x, y
         else:
             max_idx = self.synth_tokens.size(0) - self.block_size - 1
@@ -209,6 +234,17 @@ def main():
     )
     parser.add_argument(
         "--block-size", type=int, default=1024, help="Sequence block length"
+    )
+    parser.add_argument(
+        "--procedural-stream",
+        action="store_true",
+        help="Generate infinite non-repeating procedural token batches dynamically on device",
+    )
+    parser.add_argument(
+        "--save-checkpoint",
+        action="store_true",
+        default=True,
+        help="Save best model checkpoint on lowest validation loss",
     )
     parser.add_argument(
         "--dry-run",
@@ -367,6 +403,7 @@ def main():
         device=device,
         vocab_size=args.vocab_size,
         seed=args.seed,
+        procedural=args.procedural_stream,
     )
     val_loader = FastTokenStream(
         args.val_data_path,
@@ -376,6 +413,7 @@ def main():
         device=device,
         vocab_size=args.vocab_size,
         seed=args.seed + 1,
+        procedural=False,  # Fixed distribution for validation reproducibility
     )
 
     total_steps = 5 if args.dry_run else args.steps
@@ -389,6 +427,8 @@ def main():
     # Initial validation loss
     initial_val_loss = evaluate_val_loss(model, val_loader, 5 if args.dry_run else args.eval_steps, autocast_ctx)
     val_losses[0] = initial_val_loss
+    best_val_loss = initial_val_loss
+    best_step = 0
     print(f"Step 0000 | Initial Val Loss: {initial_val_loss:.4f}")
 
     for step in range(1, total_steps + 1):
@@ -422,12 +462,19 @@ def main():
 
         if use_wandb and (step % 10 == 0 or step == total_steps):
             tokens_per_sec = (args.batch_size * args.grad_accum * args.block_size) / max(1e-4, step_ms / 1000.0)
-            wandb.log({
+            log_payload = {
                 "step": step,
                 "train/loss": step_loss,
                 "train/step_ms": step_ms,
                 "train/tokens_per_sec": tokens_per_sec,
-            })
+            }
+            # Phase space telemetry from optimizers
+            for opt in optimizers:
+                if hasattr(opt, "get_phase_space_diagnostics"):
+                    diag = opt.get_phase_space_diagnostics()
+                    log_payload["train/kinetic_energy"] = diag.get("kinetic_energy", 0.0)
+                    log_payload["train/mean_gamma"] = diag.get("mean_gamma", 1.0)
+            wandb.log(log_payload)
 
         if step % eval_interval == 0 or step == total_steps:
             val_loss = evaluate_val_loss(
@@ -437,10 +484,27 @@ def main():
                 autocast_ctx=autocast_ctx,
             )
             val_losses[step] = val_loss
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_step = step
+                if args.save_checkpoint:
+                    os.makedirs("results", exist_ok=True)
+                    best_ckpt_path = f"results/best_{args.optimizer}_checkpoint.pt"
+                    torch.save({
+                        "step": step,
+                        "val_loss": val_loss,
+                        "optimizer": args.optimizer,
+                        "model_state_dict": model.state_dict(),
+                    }, best_ckpt_path)
             if use_wandb:
-                wandb.log({"step": step, "val/loss": val_loss})
+                wandb.log({
+                    "step": step,
+                    "val/loss": val_loss,
+                    "val/best_loss": best_val_loss,
+                    "val/best_step": best_step,
+                })
             print(
-                f"Step {step:04d}/{total_steps} | Train Loss: {step_loss:.4f} | Val Loss: {val_loss:.4f} | Step Time: {step_ms:.1f}ms"
+                f"Step {step:04d}/{total_steps} | Train Loss: {step_loss:.4f} | Val Loss: {val_loss:.4f} (Best: {best_val_loss:.4f} @ step {best_step}) | Step Time: {step_ms:.1f}ms"
             )
 
     elapsed_sec = time.time() - t0
@@ -470,13 +534,15 @@ def main():
     if use_wandb and wandb_run:
         wandb.summary["final_val_loss"] = final_val_loss
         wandb.summary["initial_val_loss"] = initial_val_loss
+        wandb.summary["best_val_loss"] = best_val_loss
+        wandb.summary["best_step"] = best_step
         wandb.summary["gate1_passed"] = gate1_passed
         wandb.summary["total_tokens"] = total_tokens
         wandb.finish()
 
     print("\n--- Benchmark Summary ---")
     print(f"Elapsed: {elapsed_sec:.2f}s | Tokens seen: {total_tokens:,}")
-    print(f"Initial Val Loss: {initial_val_loss:.4f} -> Final Val Loss: {final_val_loss:.4f}")
+    print(f"Initial Val Loss: {initial_val_loss:.4f} -> Final Val Loss: {final_val_loss:.4f} (Best Val Loss: {best_val_loss:.4f} @ step {best_step})")
     print(f"Gate 1 Criterion (Val Loss Convergence): {'PASS' if gate1_passed else 'FAIL'}")
 
     os.makedirs(os.path.dirname(args.manifest_path), exist_ok=True)
@@ -493,6 +559,8 @@ def main():
         "tokens_seen": total_tokens,
         "initial_val_loss": initial_val_loss,
         "final_val_loss": final_val_loss,
+        "best_val_loss": best_val_loss,
+        "best_step": best_step,
         "gate1_passed": gate1_passed,
         "gate1_criteria": "L_sym < L_muon at step 4000",
         "elapsed_sec": elapsed_sec,
