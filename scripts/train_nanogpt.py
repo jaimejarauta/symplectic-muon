@@ -169,6 +169,9 @@ def main():
         "--batch-size", type=int, default=16, help="Per-step batch size (default 16)"
     )
     parser.add_argument(
+        "--grad-accum", type=int, default=1, help="Gradient accumulation micro-steps (default 1)"
+    )
+    parser.add_argument(
         "--eval-interval", type=int, default=250, help="Evaluation interval"
     )
     parser.add_argument(
@@ -393,11 +396,16 @@ def main():
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
 
-        x, y = train_loader.get_batch()
-        with autocast_ctx:
-            _, loss = model(x, y)
+        step_loss = 0.0
+        for _ in range(args.grad_accum):
+            x, y = train_loader.get_batch()
+            with autocast_ctx:
+                _, loss = model(x, y)
+                loss_scaled = loss / args.grad_accum
 
-        scaler.scale(loss).backward()
+            scaler.scale(loss_scaled).backward()
+            step_loss += loss.item() / args.grad_accum
+
         for opt in optimizers:
             scaler.unscale_(opt)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -410,13 +418,13 @@ def main():
         scaler.update()
 
         step_ms = (time.time() - step_t0) * 1000.0
-        losses.append(loss.item())
+        losses.append(step_loss)
 
         if use_wandb and (step % 10 == 0 or step == total_steps):
-            tokens_per_sec = (args.batch_size * args.block_size) / max(1e-4, step_ms / 1000.0)
+            tokens_per_sec = (args.batch_size * args.grad_accum * args.block_size) / max(1e-4, step_ms / 1000.0)
             wandb.log({
                 "step": step,
-                "train/loss": loss.item(),
+                "train/loss": step_loss,
                 "train/step_ms": step_ms,
                 "train/tokens_per_sec": tokens_per_sec,
             })
@@ -432,12 +440,12 @@ def main():
             if use_wandb:
                 wandb.log({"step": step, "val/loss": val_loss})
             print(
-                f"Step {step:04d}/{total_steps} | Train Loss: {loss.item():.4f} | Val Loss: {val_loss:.4f} | Step Time: {step_ms:.1f}ms"
+                f"Step {step:04d}/{total_steps} | Train Loss: {step_loss:.4f} | Val Loss: {val_loss:.4f} | Step Time: {step_ms:.1f}ms"
             )
 
     elapsed_sec = time.time() - t0
     final_val_loss = val_losses[total_steps]
-    total_tokens = total_steps * args.batch_size * args.block_size
+    total_tokens = total_steps * args.batch_size * args.grad_accum * args.block_size
 
     # Gate 1 evaluation rule: L_sym < L_muon at step 4000
     # On a single arm run, verify loss convergence and pre-registered Gate 1 stability
