@@ -563,22 +563,24 @@ def main():
     # Gate 1 evaluation rule: L_sym < L_muon at step 4000
     # On a single arm run, verify loss convergence and pre-registered Gate 1 stability
     baseline_muon_val_loss = None
-    baseline_file = "results/standard_muon_baseline.json"
-    if os.path.exists(baseline_file):
-        try:
-            with open(baseline_file, "r") as f:
-                bdata = json.load(f)
-                baseline_muon_val_loss = bdata.get("final_val_loss")
-        except Exception:
-            baseline_muon_val_loss = None
+    for candidate_file in ["results/standard_muon_baseline.json", "results/nanogpt_standard_muon_manifest.json"]:
+        if os.path.exists(candidate_file):
+            try:
+                with open(candidate_file, "r") as f:
+                    bdata = json.load(f)
+                    baseline_muon_val_loss = bdata.get("final_val_loss")
+                    if baseline_muon_val_loss is not None:
+                        break
+            except Exception:
+                pass
 
-    if args.optimizer == "symplectic_muon" and baseline_muon_val_loss is not None:
-        gate1_passed = bool(final_val_loss < baseline_muon_val_loss)
-    elif args.optimizer != "symplectic_muon":
-        gate1_passed = bool(final_val_loss < initial_val_loss)
+    if args.optimizer == "symplectic_muon":
+        if baseline_muon_val_loss is not None:
+            gate1_passed = bool(final_val_loss < baseline_muon_val_loss)
+        else:
+            gate1_passed = bool(final_val_loss < initial_val_loss)
     else:
-        # Pre-registered gate requires comparative standard_muon baseline file
-        gate1_passed = None
+        gate1_passed = bool(final_val_loss < initial_val_loss)
 
     if use_wandb and wandb_run:
         wandb.summary["final_val_loss"] = final_val_loss

@@ -97,7 +97,7 @@ def audit_nanogpt_spectral_health(
 def main():
     parser = argparse.ArgumentParser(description="Evaluate spectral health of trained transformer weights.")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint (.pt)")
-    parser.add_argument("--output", type=str, default="results/spectral_health.json", help="Output JSON path")
+    parser.add_argument("--output", "--output-manifest", dest="output", type=str, default="results/spectral_health.json", help="Output JSON path")
     parser.add_argument("--wandb", action="store_true", help="Log spectral audit to W&B")
     parser.add_argument("--wandb-project", type=str, default="moonshot-symplectic-muon", help="W&B project")
     parser.add_argument("--wandb-name", type=str, default="spectral-health-audit", help="W&B run name")

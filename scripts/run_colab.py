@@ -181,7 +181,7 @@ def main():
         cmd_spectral = [
             sys.executable, spectral_script,
             "--checkpoint", ckpt_path,
-            "--output-manifest", "results/spectral_health_manifest.json"
+            "--output", "results/spectral_health_manifest.json"
         ]
         subprocess.run(cmd_spectral, env=env)
 
