@@ -12,6 +12,7 @@ import sys
 import time
 from typing import Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -21,6 +22,7 @@ if repo_src not in sys.path:
 
 from symplectic_muon.nanogpt import GPTConfig, NanoGPT, partition_parameters
 from symplectic_muon.optimizer import StandardMuon, SymplecticMuon
+from symplectic_muon.runtime import Run, file_digest
 
 
 def get_git_commit() -> str:
@@ -259,6 +261,11 @@ def main():
         help="Execute 5-step smoke verification run and exit",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--out-dir", type=str, default=None, help="Resumable run directory (checkpoint + manifest)")
+    parser.add_argument("--compile", action="store_true", help="torch.compile the model")
+    parser.add_argument("--fixed-gamma", type=float, default=None, help="Symplectic control arm: constant gamma")
+    parser.add_argument("--budget-hours", type=float, default=None, help="Stop if projected time > 2x this")
+    parser.add_argument("--compare", nargs="+", default=None, help="Finished run directories: apply the gate")
     parser.add_argument(
         "--manifest-path",
         type=str,
@@ -290,6 +297,8 @@ def main():
         help="W&B run mode override",
     )
     args = parser.parse_args()
+    if args.compare:
+        return compare_runs(args.compare)
 
     torch.manual_seed(args.seed)
     import numpy as np
@@ -354,6 +363,9 @@ def main():
     # 2D linear weight matrices -> SymplecticMuon / StandardMuon
     # 1D normalization and embedding layers -> AdamW
     muon_params, adamw_params = partition_parameters(model)
+    raw_model = model
+    if args.compile:
+        model = torch.compile(model)
     print(
         f"Partitioned parameters: {len(muon_params)} 2D linear matrices for Muon ({sum(p.numel() for p in muon_params):,} params) | "
         f"{len(adamw_params)} 1D/embedding tensors for AdamW ({sum(p.numel() for p in adamw_params):,} params)"
@@ -367,6 +379,7 @@ def main():
             momentum=0.95,
             weight_decay=args.weight_decay,
             steps=5,
+            fixed_gamma=args.fixed_gamma,
         )
         opt_adamw = torch.optim.AdamW(
             adamw_params,
@@ -433,13 +446,33 @@ def main():
     val_losses = {}
 
     # Initial validation loss
-    initial_val_loss = evaluate_val_loss(model, val_loader, 5 if args.dry_run else args.eval_steps, autocast_ctx)
-    val_losses[0] = initial_val_loss
-    best_val_loss = initial_val_loss
-    best_step = 0
+    run = Run(args.out_dir, vars(args), budget_hours=args.budget_hours) if args.out_dir else None
+    state = run.resume() if run else None
+    start_step = 0
+    if state:
+        raw_model.load_state_dict(state["model"])
+        for opt, sd in zip(optimizers, state["optimizers"]):
+            opt.load_state_dict(sd)
+        scaler.load_state_dict(state["scaler"])
+        np.random.set_state(state["np_rng"]); torch.set_rng_state(state["torch_rng"])
+        start_step, val_losses = state["step"], state["val_losses"]
+        initial_val_loss = val_losses[0]
+    else:
+        initial_val_loss = evaluate_val_loss(model, val_loader, 5 if args.dry_run else args.eval_steps, autocast_ctx)
+        val_losses[0] = initial_val_loss
+    if run and args.data_path and os.path.exists(args.data_path):
+        run.data_digests["train"] = file_digest(args.data_path)
+    best_step = min(val_losses, key=val_losses.get)
+    best_val_loss = val_losses[best_step]
+
+    def save_state(step_done):
+        if run:
+            run.save({"model": raw_model.state_dict(), "optimizers": [o.state_dict() for o in optimizers],
+                      "scaler": scaler.state_dict(), "np_rng": np.random.get_state(),
+                      "torch_rng": torch.get_rng_state(), "step": step_done, "val_losses": val_losses})
     print(f"Step 0000 | Initial Val Loss: {initial_val_loss:.4f}")
 
-    for step in range(1, total_steps + 1):
+    for step in range(start_step + 1, total_steps + 1):
         step_t0 = time.time()
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
@@ -467,6 +500,12 @@ def main():
 
         step_ms = (time.time() - step_t0) * 1000.0
         losses.append(step_loss)
+        if run:
+            if step == start_step + 50:
+                run.log_throughput(step - start_step, total_steps - start_step, "steps")
+                run.check_budget(step, total_steps)
+            if run.due():
+                save_state(step)
 
         if use_wandb and (step % 10 == 0 or step == total_steps):
             tokens_per_sec = (args.batch_size * args.grad_accum * args.block_size) / max(1e-4, step_ms / 1000.0)
@@ -482,6 +521,7 @@ def main():
                     diag = opt.get_phase_space_diagnostics()
                     log_payload["train/kinetic_energy"] = diag.get("kinetic_energy", 0.0)
                     log_payload["train/mean_gamma"] = diag.get("mean_gamma", 1.0)
+                    log_payload["train/frac_gamma_clamped"] = diag.get("frac_clamped", 0.0)
             wandb.log(log_payload)
 
         if step % eval_interval == 0 or step == total_steps:
@@ -516,6 +556,7 @@ def main():
             )
 
     elapsed_sec = time.time() - t0
+    save_state(total_steps)
     final_val_loss = val_losses[total_steps]
     total_tokens = total_steps * args.batch_size * args.grad_accum * args.block_size
 
@@ -581,7 +622,32 @@ def main():
     with open(args.manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
     print(f"Wrote provenance manifest to {args.manifest_path}")
+    if run:
+        tok_per_step = args.batch_size * args.grad_accum * args.block_size
+        run.write_manifest(dict(manifest, val_curve={int(k) * tok_per_step: v for k, v in val_losses.items()}))
 
+    return 0
+
+
+def compare_runs(dirs):
+    """Gate (2026-10-26): Symplectic beats tuned Muon by >= 0.02 final val loss on every seed, and the fixed-gamma
+    arm does not match it (|fixed - symplectic| >= 0.01); otherwise the gain is a learning-rate effect."""
+    rows = []
+    for d in dirs:
+        m = json.load(open(os.path.join(d, "manifest.json")))
+        c = m["config"]
+        arm = c["optimizer"] + ("-fixed" if c.get("fixed_gamma") is not None else "")
+        rows.append((arm, c["seed"], c["lr"], m["results"]["final_val_loss"]))
+        print(f"{arm:<22} seed {c['seed']} lr {c['lr']:<6} final val {m['results']['final_val_loss']:.4f}")
+    best = lambda arm: {s: v for a, s, _, v in sorted(rows, key=lambda r: -r[3]) if a == arm}
+    sym, muon, fixed = best("symplectic_muon"), best("standard_muon"), best("symplectic_muon-fixed")
+    seeds = sorted(set(sym) & set(muon))
+    if not seeds:
+        raise SystemExit("need symplectic_muon and standard_muon runs with matching seeds")
+    beats = all(muon[s] - sym[s] >= 0.02 for s in seeds)
+    lr_effect = any(abs(fixed[s] - sym[s]) < 0.01 for s in seeds if s in fixed)
+    print(f"symplectic beats muon by >= 0.02 on seeds {seeds}: {beats} | fixed-gamma matches it: {lr_effect}")
+    print("PASS" if beats and not lr_effect else "FAIL")
     return 0
 
 

@@ -140,10 +140,11 @@ class SymplecticMuon(Optimizer):
     """Thermostatted semi-implicit symplectic Euler optimizer with polar orthogonalization."""
     def __init__(self, params, lr: float = 0.02, momentum: float = 0.95, weight_decay: float = 0.01,
                  steps: int = 5, eps: float = 1e-7, gamma_min: float = 0.5, gamma_max: float = 1.8,
-                 ema_alpha: float = 0.05, nesterov: bool = True):
+                 ema_alpha: float = 0.05, nesterov: bool = True, fixed_gamma: float = None):
+        # fixed_gamma: control arm with a constant scale (isolates the adaptive part of the rule)
         defaults = dict(lr=lr, momentum=momentum, weight_decay=weight_decay,
                         steps=steps, eps=eps, gamma_min=gamma_min,
-                        gamma_max=gamma_max, ema_alpha=ema_alpha, nesterov=nesterov)
+                        gamma_max=gamma_max, ema_alpha=ema_alpha, nesterov=nesterov, fixed_gamma=fixed_gamma)
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -198,6 +199,8 @@ class SymplecticMuon(Optimizer):
                     # ||buf|| and would otherwise act as a hidden 0.5x LR warm-up
                     if state['step'] <= math.ceil(3.0 / max(1e-3, 1.0 - mu)):
                         gamma = torch.ones_like(gamma)
+                    if group['fixed_gamma'] is not None:
+                        gamma = torch.full_like(gamma, group['fixed_gamma'])
                     
                     # Cached symmetric aspect-ratio compensation
                     aspect_scale = state.get('aspect_scale', math.sqrt(max(p.size(0), p.size(1)) / min(p.size(0), p.size(1))))
@@ -230,7 +233,9 @@ class SymplecticMuon(Optimizer):
                         gamma = (state["running_norm"] / (current_norm + eps)).clamp(g_min, g_max).item()
                         gammas.append(gamma)
         mean_gamma = float(sum(gammas) / max(1, len(gammas))) if gammas else 1.0
+        g_lo, g_hi = self.defaults["gamma_min"], self.defaults["gamma_max"]
         return {
+            "frac_clamped": sum(g <= g_lo or g >= g_hi for g in gammas) / max(1, len(gammas)),
             "kinetic_energy": total_kinetic_energy,
             "mean_gamma": mean_gamma,
             "min_gamma": float(min(gammas)) if gammas else 1.0,

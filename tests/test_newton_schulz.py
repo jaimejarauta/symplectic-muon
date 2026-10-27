@@ -82,3 +82,17 @@ def test_nesterov_update_direction():
     # buf = g after one step; nesterov direction = g + 0.9 * buf = 1.9 g
     want = -math.sqrt(32 / 16) * zeropower_via_newtonschulz5(1.9 * g)
     assert torch.allclose(p.data, want, atol=1e-5)
+
+
+def test_fixed_gamma_one_equals_standard_muon():
+    from symplectic_muon.optimizer import StandardMuon
+    torch.manual_seed(0)
+    ps, pm = torch.nn.Parameter(torch.randn(16, 24)), None
+    pm = torch.nn.Parameter(ps.detach().clone())
+    sym = SymplecticMuon([ps], lr=0.02, fixed_gamma=1.0)
+    std = StandardMuon([pm], lr=0.02)
+    for _ in range(80):
+        g = torch.randn(16, 24)
+        ps.grad, pm.grad = g.clone(), g.clone()
+        sym.step(); std.step()
+    assert torch.allclose(ps, pm, atol=1e-6)

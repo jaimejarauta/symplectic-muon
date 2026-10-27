@@ -1,0 +1,17 @@
+README.md
+START_CODING.md
+pyproject.toml
+src/symplectic_muon/__init__.py
+src/symplectic_muon/nanogpt.py
+src/symplectic_muon/optimizer.py
+src/symplectic_muon/runtime.py
+src/symplectic_muon/spectral.py
+src/symplectic_muon.egg-info/PKG-INFO
+src/symplectic_muon.egg-info/SOURCES.txt
+src/symplectic_muon.egg-info/dependency_links.txt
+src/symplectic_muon.egg-info/requires.txt
+src/symplectic_muon.egg-info/top_level.txt
+tests/test_data_stream.py
+tests/test_nanogpt.py
+tests/test_newton_schulz.py
+tests/test_runtime.py

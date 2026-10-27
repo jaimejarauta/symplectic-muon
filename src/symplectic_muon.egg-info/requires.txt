@@ -1,0 +1,10 @@
+torch>=2.2.0
+numpy>=1.24.0
+pyyaml>=6.0
+wandb>=0.16.0
+
+[:sys_platform == "linux"]
+triton>=3.0.0
+
+[dev]
+pytest>=8.0.0
